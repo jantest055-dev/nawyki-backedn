@@ -1,0 +1,30 @@
+{
+  "users": {
+    "@": {
+      "id": "ee401066-772e-47a1-9d73-14d9f8d1ca0d",
+      "name": "jan",
+      "email": "@",
+      "password": "$2a$10$FvXCfGXivKUEhNPnDR5VPO/.gbscYrfr4cDTiYVLnIbcTUT6qEHty",
+      "is_verified": true,
+      "is_premium": true,
+      "verify_token": null,
+      "data": {
+        "xp": 55,
+        "streak": 2,
+        "tasks": [],
+        "lessons": [
+          "daily_15_2026-06-03"
+        ],
+        "challenges": {},
+        "history": {
+          "2026-06-03": {
+            "tasksDone": 2,
+            "xp": 35
+          }
+        },
+        "lastDay": "2026-06-04",
+        "onboarded": true
+      }
+    }
+  }
+}

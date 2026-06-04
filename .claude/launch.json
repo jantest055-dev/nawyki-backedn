@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "sklep",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["serve", "C:\\Users\\48570\\Desktop\\sklep", "-l", "3001"],
+      "port": 3001
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__Claude_in_Chrome__tabs_context_mcp",
+      "Bash(Expand-Archive -Path \"C:\\\\Users\\\\48570\\\\Downloads\\\\drive-download-20260603T152816Z-3-001.zip\" -DestinationPath \"C:\\\\Users\\\\48570\\\\Downloads\\\\program_nawyki\" -Force)",
+      "Bash(unzip -o \"/mnt/c/Users/48570/Downloads/drive-download-20260603T152816Z-3-001.zip\" -d \"/mnt/c/Users/48570/Downloads/program_nawyki\")"
+    ]
+  }
+}
