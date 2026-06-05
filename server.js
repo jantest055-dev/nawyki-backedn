@@ -9,7 +9,10 @@ const fs      = require("fs");
 const path    = require("path");
 
 const app = express();
-app.use(cors());
+app.use(cors({
+  origin: ["https://nawyki-wojownika-k2yh991if-puzon-s-projects.vercel.app", "https://nawyki-wojownika.vercel.app", "http://localhost:5173"],
+  credentials: true,
+}));
 app.use(express.json());
 
 // ── BAZA DANYCH (plik JSON) ───────────────────────────────────────────────────
