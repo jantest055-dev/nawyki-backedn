@@ -164,6 +164,77 @@ app.post("/login", async (req, res) => {
   }
 });
 
+// POST /forgot-password
+app.post("/forgot-password", async (req, res) => {
+  try {
+    const { email } = req.body;
+    const db  = loadDB();
+    const key = email?.trim().toLowerCase();
+    const user = db.users[key];
+
+    // Zawsze odpowiadamy OK — żeby nie ujawniać czy email istnieje
+    if (!user) return res.json({ message: "Jeśli konto istnieje, wysłaliśmy link na podany email." });
+
+    const resetToken  = crypto.randomBytes(32).toString("hex");
+    const resetExpiry = Date.now() + 60 * 60 * 1000; // 1 godzina
+
+    db.users[key].reset_token  = resetToken;
+    db.users[key].reset_expiry = resetExpiry;
+    saveDB(db);
+
+    if (transporter) {
+      const url = `${process.env.FRONTEND_URL || "http://localhost:5173"}?reset=${resetToken}`;
+      await transporter.sendMail({
+        from: process.env.FROM_EMAIL || "Nawyki Wojownika <noreply@example.com>",
+        to: key,
+        subject: "Reset hasła — Nawyki Wojownika",
+        html: `<div style="font-family:sans-serif;max-width:480px">
+          <h2 style="color:#f0a500">⚔️ Nawyki Wojownika</h2>
+          <p>Kliknij link żeby ustawić nowe hasło (ważny 1 godzinę):</p>
+          <a href="${url}" style="display:inline-block;padding:12px 24px;background:#f0a500;color:#0f1923;font-weight:700;text-decoration:none;border-radius:8px">
+            RESETUJ HASŁO →
+          </a>
+          <p style="color:#888;font-size:12px;margin-top:24px">Jeśli to nie Ty — zignoruj ten email.</p>
+        </div>`,
+      }).catch(e => console.error("Mail error:", e.message));
+    } else {
+      // Bez SMTP — zwróć token bezpośrednio (tylko dev)
+      return res.json({ message: "Link resetujący (tryb dev):", devToken: resetToken });
+    }
+
+    res.json({ message: "Jeśli konto istnieje, wysłaliśmy link na podany email." });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ message: "Błąd serwera." });
+  }
+});
+
+// POST /reset-password
+app.post("/reset-password", async (req, res) => {
+  try {
+    const { token, password } = req.body;
+    if (!password || password.length < 6) return res.status(400).json({ message: "Hasło min. 6 znaków." });
+
+    const db   = loadDB();
+    const user = Object.values(db.users).find(u => u.reset_token === token);
+
+    if (!user)                          return res.status(400).json({ message: "Link nieważny lub wygasły." });
+    if (Date.now() > user.reset_expiry) return res.status(400).json({ message: "Link wygasł — wyślij nowy." });
+
+    const hash = await bcrypt.hash(password, 10);
+    db.users[user.email].password     = hash;
+    db.users[user.email].reset_token  = null;
+    db.users[user.email].reset_expiry = null;
+    db.users[user.email].is_verified  = true; // aktywuj konto przy okazji
+    saveDB(db);
+
+    res.json({ message: "Hasło zostało zmienione. Możesz się zalogować." });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ message: "Błąd serwera." });
+  }
+});
+
 // GET /me
 app.get("/me", auth, (req, res) => {
   const db   = loadDB();
@@ -212,6 +283,73 @@ app.get("/leaderboard", auth, (req, res) => {
     .sort((a, b) => b.xp - a.xp)
     .slice(0, 20);
   res.json(list);
+});
+
+// POST /ai-chat — tylko premium
+app.post("/ai-chat", auth, async (req, res) => {
+  try {
+    const db   = loadDB();
+    const user = db.users[req.user.email];
+    if (!user)            return res.status(404).json({ message: "Użytkownik nie istnieje." });
+    if (!user.is_premium) return res.status(403).json({ message: "Ta funkcja dostępna jest tylko dla użytkowników premium." });
+
+    const { messages, userData: ud } = req.body;
+    if (!messages?.length) return res.status(400).json({ message: "Brak wiadomości." });
+
+    const OPENAI_KEY = process.env.OPENAI_API_KEY;
+    if (!OPENAI_KEY) return res.status(500).json({ message: "Brak klucza OpenAI na serwerze." });
+
+    // Buduj systemowy kontekst z danymi użytkownika
+    const systemPrompt = `Jesteś Wojownik AI — osobisty asystent dyscypliny i nawyków w aplikacji "Nawyki Wojownika".
+Rozmawiasz z użytkownikiem ${user.name}.
+
+DANE UŻYTKOWNIKA:
+- Streak: ${ud?.streak || 0} dni z rzędu
+- XP: ${ud?.xp || 0} punktów
+- Zadania dziś: ${(ud?.tasks || []).length}/${10} ukończonych
+- Ukończone lekcje: ${(ud?.lessons || []).filter(l => typeof l === "number").length}/30
+- Aktywne wyzwania: ${Object.values(ud?.challenges || {}).filter(c => c.active).length}
+
+TWOJA ROLA:
+- Motywuj, doradzaj i pomagaj budować dyscyplinę
+- Odpowiadaj WYŁĄCZNIE po polsku
+- Bądź konkretny — dawaj praktyczne wskazówki, nie ogólniki
+- Nawiązuj do danych użytkownika gdy to możliwe
+- Pisz krótko i na temat — max 3-4 zdania na odpowiedź
+- Styl: wojowniczy, motywujący, bezpośredni — jak mentor nie terapeuta
+- Nie używaj emoji w nadmiarze`;
+
+    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${OPENAI_KEY}`,
+      },
+      body: JSON.stringify({
+        model: "gpt-4o-mini",
+        messages: [
+          { role: "system", content: systemPrompt },
+          ...messages.slice(-10), // ostatnie 10 wiadomości (kontekst)
+        ],
+        max_tokens: 300,
+        temperature: 0.8,
+      }),
+    });
+
+    if (!response.ok) {
+      const err = await response.json();
+      console.error("OpenAI error:", err);
+      return res.status(500).json({ message: "Błąd AI — spróbuj ponownie." });
+    }
+
+    const data = await response.json();
+    const reply = data.choices[0].message.content;
+    res.json({ reply });
+
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ message: "Błąd serwera." });
+  }
 });
 
 // ── START ─────────────────────────────────────────────────────────────────────
