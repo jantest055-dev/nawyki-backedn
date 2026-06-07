@@ -49,30 +49,38 @@ const PORT          = process.env.PORT || 3000;
 const PREMIUM_CODES = (process.env.PREMIUM_CODES || "WOJOWNIK2024,DYSCYPLINA77,NAWYKI2024,KOD77")
   .split(",").map(c => c.trim().toUpperCase());
 
-// ── MAILER ────────────────────────────────────────────────────────────────────
-const mailerEnabled = !!(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS);
-const transporter   = mailerEnabled
-  ? nodemailer.createTransport({
-      host: process.env.SMTP_HOST,
-      port: Number(process.env.SMTP_PORT) || 465,
-      secure: true,
-      auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
-    })
-  : null;
+// ── MAILER (Brevo API) ────────────────────────────────────────────────────────
+const mailerEnabled = !!process.env.BREVO_API_KEY;
+
+async function sendEmail(to, subject, html) {
+  if (!mailerEnabled) return;
+  const res = await fetch("https://api.brevo.com/v3/smtp/email", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "api-key": process.env.BREVO_API_KEY,
+    },
+    body: JSON.stringify({
+      sender: { name: "Nawyki Wojownika", email: process.env.FROM_EMAIL || "ade1b5001@smtp-brevo.com" },
+      to: [{ email: to }],
+      subject,
+      htmlContent: html,
+    }),
+  });
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(JSON.stringify(err));
+  }
+}
 
 async function sendVerificationEmail(email, token) {
-  if (!transporter) return;
   const url = `${process.env.FRONTEND_URL || "http://localhost:5173"}/verify?token=${token}`;
-  await transporter.sendMail({
-    from: process.env.FROM_EMAIL || "Nawyki Wojownika <noreply@example.com>",
-    to: email,
-    subject: "Aktywuj konto — Nawyki Wojownika",
-    html: `<div style="font-family:sans-serif;max-width:480px;background:#0f1923;color:#fff;padding:32px;border-radius:12px">
+  await sendEmail(email, "Aktywuj konto — Nawyki Wojownika", `<div style="font-family:sans-serif;max-width:480px;background:#0f1923;color:#fff;padding:32px;border-radius:12px">
       <h2 style="color:#f0a500">⚔️ Nawyki Wojownika</h2>
       <p>Cześć! Kliknij poniższy przycisk żeby aktywować konto:</p>
       <a href="${url}" style="display:inline-block;padding:14px 28px;background:#f0a500;color:#0f1923;text-decoration:none;border-radius:8px;font-weight:700;font-size:16px;margin:16px 0">AKTYWUJ KONTO →</a>
       <p style="color:#888;font-size:12px;margin-top:24px">Jeśli to nie Ty — zignoruj ten email.</p>
-    </div>`,
+    </div>`
   });
 }
 
@@ -194,19 +202,14 @@ app.post("/forgot-password", async (req, res) => {
     user.reset_expiry = Date.now() + 60 * 60 * 1000;
     await user.save();
 
-    if (transporter) {
+    if (mailerEnabled) {
       const url = `${process.env.FRONTEND_URL || "http://localhost:5173"}?reset=${resetToken}`;
-      await transporter.sendMail({
-        from: process.env.FROM_EMAIL || "Nawyki Wojownika <noreply@example.com>",
-        to: key,
-        subject: "Reset hasła — Nawyki Wojownika",
-        html: `<div style="font-family:sans-serif;max-width:480px;background:#0f1923;color:#fff;padding:32px;border-radius:12px">
+      await sendEmail(key, "Reset hasła — Nawyki Wojownika", `<div style="font-family:sans-serif;max-width:480px;background:#0f1923;color:#fff;padding:32px;border-radius:12px">
           <h2 style="color:#f0a500">⚔️ Nawyki Wojownika</h2>
           <p>Kliknij link żeby ustawić nowe hasło (ważny 1 godzinę):</p>
           <a href="${url}" style="display:inline-block;padding:14px 28px;background:#f0a500;color:#0f1923;font-weight:700;text-decoration:none;border-radius:8px;font-size:16px;margin:16px 0">RESETUJ HASŁO →</a>
           <p style="color:#888;font-size:12px;margin-top:24px">Jeśli to nie Ty — zignoruj ten email.</p>
-        </div>`,
-      }).catch(e => console.error("Mail error:", e.message));
+        </div>`).catch(e => console.error("Mail error:", e.message));
     } else {
       return res.json({ message: "Link resetujący (tryb dev):", devToken: resetToken });
     }
