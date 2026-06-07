@@ -75,13 +75,13 @@ async function sendEmail(to, subject, html) {
 
 async function sendVerificationEmail(email, token) {
   const url = `${process.env.FRONTEND_URL || "http://localhost:5173"}/verify?token=${token}`;
-  await sendEmail(email, "Aktywuj konto — Nawyki Wojownika", `<div style="font-family:sans-serif;max-width:480px;background:#0f1923;color:#fff;padding:32px;border-radius:12px">
-      <h2 style="color:#f0a500">⚔️ Nawyki Wojownika</h2>
-      <p>Cześć! Kliknij poniższy przycisk żeby aktywować konto:</p>
-      <a href="${url}" style="display:inline-block;padding:14px 28px;background:#f0a500;color:#0f1923;text-decoration:none;border-radius:8px;font-weight:700;font-size:16px;margin:16px 0">AKTYWUJ KONTO →</a>
-      <p style="color:#888;font-size:12px;margin-top:24px">Jeśli to nie Ty — zignoruj ten email.</p>
-    </div>`
-  });
+  const html = '<div style="font-family:sans-serif;max-width:480px;background:#0f1923;color:#fff;padding:32px;border-radius:12px">'
+    + '<h2 style="color:#f0a500">Nawyki Wojownika</h2>'
+    + '<p>Kliknij przycisk zeby aktywowac konto:</p>'
+    + '<a href="' + url + '" style="display:inline-block;padding:14px 28px;background:#f0a500;color:#0f1923;text-decoration:none;border-radius:8px;font-weight:700;font-size:16px;margin:16px 0">AKTYWUJ KONTO</a>'
+    + '<p style="color:#888;font-size:12px;margin-top:24px">Jesli to nie Ty - zignoruj ten email.</p>'
+    + '</div>';
+  await sendEmail(email, "Aktywuj konto - Nawyki Wojownika", html);
 }
 
 // ── AUTH MIDDLEWARE ───────────────────────────────────────────────────────────
@@ -204,12 +204,13 @@ app.post("/forgot-password", async (req, res) => {
 
     if (mailerEnabled) {
       const url = `${process.env.FRONTEND_URL || "http://localhost:5173"}?reset=${resetToken}`;
-      await sendEmail(key, "Reset hasła — Nawyki Wojownika", `<div style="font-family:sans-serif;max-width:480px;background:#0f1923;color:#fff;padding:32px;border-radius:12px">
-          <h2 style="color:#f0a500">⚔️ Nawyki Wojownika</h2>
-          <p>Kliknij link żeby ustawić nowe hasło (ważny 1 godzinę):</p>
-          <a href="${url}" style="display:inline-block;padding:14px 28px;background:#f0a500;color:#0f1923;font-weight:700;text-decoration:none;border-radius:8px;font-size:16px;margin:16px 0">RESETUJ HASŁO →</a>
-          <p style="color:#888;font-size:12px;margin-top:24px">Jeśli to nie Ty — zignoruj ten email.</p>
-        </div>`).catch(e => console.error("Mail error:", e.message));
+      const html = '<div style="font-family:sans-serif;max-width:480px;background:#0f1923;color:#fff;padding:32px;border-radius:12px">'
+        + '<h2 style="color:#f0a500">Nawyki Wojownika</h2>'
+        + '<p>Kliknij link zeby ustawic nowe haslo (wazny 1 godzine):</p>'
+        + '<a href="' + url + '" style="display:inline-block;padding:14px 28px;background:#f0a500;color:#0f1923;font-weight:700;text-decoration:none;border-radius:8px;font-size:16px;margin:16px 0">RESETUJ HASLO</a>'
+        + '<p style="color:#888;font-size:12px;margin-top:24px">Jesli to nie Ty - zignoruj ten email.</p>'
+        + '</div>';
+      await sendEmail(key, "Reset hasla - Nawyki Wojownika", html).catch(e => console.error("Mail error:", e.message));
     } else {
       return res.json({ message: "Link resetujący (tryb dev):", devToken: resetToken });
     }
