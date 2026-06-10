@@ -38,6 +38,7 @@ const userSchema = new mongoose.Schema({
     history:    { type: Object, default: {} },
     lastDay:    { type: String, default: null },
     onboarded:  { type: Boolean, default: false },
+    goals:      { type: Array,  default: [] },
   },
 });
 
@@ -113,6 +114,7 @@ function buildMe(user) {
     history:     d.history   || {},
     lastDay:     d.lastDay   || null,
     onboarded:   d.onboarded || false,
+    goals:       d.goals     || [],
   };
 }
 
@@ -260,7 +262,7 @@ app.get("/me", auth, async (req, res) => {
 // POST /sync
 app.post("/sync", auth, async (req, res) => {
   try {
-    const allowed = ["xp","streak","tasks","lessons","challenges","history","lastDay","onboarded"];
+    const allowed = ["xp","streak","tasks","lessons","challenges","history","lastDay","onboarded","goals"];
     const user = await User.findOne({ email: req.user.email });
     if (!user) return res.status(404).json({ message: "Użytkownik nie istnieje." });
 
@@ -373,6 +375,84 @@ TWOJA ROLA:
   } catch (e) {
     console.error(e);
     res.status(500).json({ message: "Błąd serwera." });
+  }
+});
+
+// POST /generate-goal — generuje plan celu na 30 dni
+app.post("/generate-goal", auth, async (req, res) => {
+  try {
+    const { goal } = req.body;
+    if (!goal?.trim()) return res.status(400).json({ message: "Wpisz cel." });
+
+    const OPENAI_KEY = process.env.OPENAI_API_KEY;
+    if (!OPENAI_KEY) return res.status(500).json({ message: "Brak klucza OpenAI na serwerze." });
+
+    const prompt = `Użytkownik chce osiągnąć cel: "${goal}"
+
+Rozpisz plan na 30 dni. Podziel go na 5 etapów po 6 dni każdy.
+Dla każdego etapu podaj 3 konkretne codzienne zadania (nawyki).
+
+Odpowiedz TYLKO w formacie JSON, bez żadnego tekstu przed ani po:
+{
+  "goal": "nazwa celu",
+  "summary": "krótki opis planu (1 zdanie)",
+  "stages": [
+    {
+      "stage": 1,
+      "days": "1-6",
+      "name": "nazwa etapu",
+      "tasks": ["zadanie 1", "zadanie 2", "zadanie 3"]
+    }
+  ]
+}`;
+
+    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer " + OPENAI_KEY,
+      },
+      body: JSON.stringify({
+        model: "gpt-4o-mini",
+        messages: [{ role: "user", content: prompt }],
+        max_tokens: 1000,
+        temperature: 0.7,
+      }),
+    });
+
+    if (!response.ok) {
+      const err = await response.json();
+      console.error("OpenAI error:", err);
+      return res.status(500).json({ message: "Blad AI — sprobuj ponownie." });
+    }
+
+    const data = await response.json();
+    const text = data.choices[0].message.content;
+
+    let plan;
+    try {
+      plan = JSON.parse(text);
+    } catch {
+      return res.status(500).json({ message: "AI zwrocilo niepoprawny format — sprobuj ponownie." });
+    }
+
+    // Zapisz plan w danych uzytkownika
+    const user = await User.findOne({ email: req.user.email });
+    if (!user) return res.status(404).json({ message: "Uzytkownik nie istnieje." });
+
+    if (!user.data.goals) user.data.goals = [];
+    user.data.goals.push({
+      id:        crypto.randomUUID(),
+      createdAt: new Date().toISOString(),
+      plan,
+    });
+    user.markModified("data");
+    await user.save();
+
+    res.json({ ok: true, plan });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ message: "Blad serwera." });
   }
 });
 
