@@ -51,7 +51,7 @@ const PREMIUM_CODES = (process.env.PREMIUM_CODES || "WOJOWNIK2024,DYSCYPLINA77,N
   .split(",").map(c => c.trim().toUpperCase());
 
 // ── MAILER (Brevo API) ────────────────────────────────────────────────────────
-const mailerEnabled = false; // wyłączone — Render Free blokuje połączenia wychodzące
+const mailerEnabled = !!process.env.BREVO_API_KEY;
 
 async function sendEmail(to, subject, html) {
   if (!mailerEnabled) return;
