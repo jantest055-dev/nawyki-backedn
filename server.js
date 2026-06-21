@@ -6,8 +6,63 @@ const jwt      = require("jsonwebtoken");
 const nodemailer = require("nodemailer");
 const crypto   = require("crypto");
 const mongoose = require("mongoose");
+const Stripe   = require("stripe");
+const webpush  = require("web-push");
+
+const stripe = process.env.STRIPE_SECRET_KEY ? Stripe(process.env.STRIPE_SECRET_KEY) : null;
+
+if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
+  webpush.setVapidDetails(
+    `mailto:${process.env.FROM_EMAIL || "kontakt@nawykiwojownika.pl"}`,
+    process.env.VAPID_PUBLIC_KEY,
+    process.env.VAPID_PRIVATE_KEY
+  );
+}
+
+const PLANS = {
+  monthly: { name: "Premium 1 miesiąc", price: 4700, interval: "month", months: 1 },
+  quarterly: { name: "Premium 3 miesiące", price: 9700, interval: null, months: 3 },
+  yearly: { name: "Premium 1 rok", price: 34900, interval: "year", months: 12 },
+};
 
 const app = express();
+
+// Stripe webhook musi mieć raw body — przed express.json()
+app.post("/webhook", express.raw({ type: "application/json" }), async (req, res) => {
+  if (!stripe) return res.status(500).json({ message: "Stripe nie skonfigurowany." });
+  const sig = req.headers["stripe-signature"];
+  let event;
+  try {
+    event = stripe.webhooks.constructEvent(req.body, sig, process.env.STRIPE_WEBHOOK_SECRET);
+  } catch (e) {
+    console.error("Webhook błąd:", e.message);
+    return res.status(400).send(`Webhook Error: ${e.message}`);
+  }
+
+  if (event.type === "checkout.session.completed") {
+    const session = event.data.object;
+    const email   = session.customer_email || session.metadata?.email;
+    const months  = parseInt(session.metadata?.months || "1");
+    if (email) {
+      try {
+        const user = await User.findOne({ email: email.toLowerCase() });
+        if (user) {
+          user.is_premium = true;
+          const now = new Date();
+          const expiry = new Date(now);
+          expiry.setMonth(expiry.getMonth() + months);
+          user.premium_expiry = expiry;
+          await user.save();
+          console.log(`✅ Premium aktywowane dla ${email} do ${expiry.toISOString()}`);
+        }
+      } catch (e) {
+        console.error("Błąd aktywacji premium:", e.message);
+      }
+    }
+  }
+  res.json({ received: true });
+});
+
 app.use(cors({
   origin: ["https://nawyki-wojownika-k2yh991if-puzon-s-projects.vercel.app", "https://nawyki-wojownika.vercel.app", "http://localhost:5173"],
   credentials: true,
@@ -20,15 +75,17 @@ mongoose.connect(process.env.MONGODB_URI)
   .catch(e => { console.error("❌ MongoDB błąd:", e.message); process.exit(1); });
 
 const userSchema = new mongoose.Schema({
-  id:           { type: String, default: () => crypto.randomUUID() },
-  name:         String,
-  email:        { type: String, unique: true, lowercase: true, trim: true },
-  password:     String,
-  is_verified:  { type: Boolean, default: false },
-  is_premium:   { type: Boolean, default: false },
-  verify_token: String,
-  reset_token:  String,
-  reset_expiry: Number,
+  id:              { type: String, default: () => crypto.randomUUID() },
+  name:            String,
+  email:           { type: String, unique: true, lowercase: true, trim: true },
+  password:        String,
+  is_verified:     { type: Boolean, default: false },
+  is_premium:      { type: Boolean, default: false },
+  premium_expiry:  { type: Date, default: null },
+  verify_token:    String,
+  reset_token:     String,
+  reset_expiry:    Number,
+  push_subscription: { type: Object, default: null },
   data: {
     xp:         { type: Number, default: 0 },
     streak:     { type: Number, default: 1 },
@@ -100,21 +157,23 @@ function auth(req, res, next) {
 // ── HELPER ────────────────────────────────────────────────────────────────────
 function buildMe(user) {
   const d = user.data || {};
+  const premiumActive = !!user.is_premium && (!user.premium_expiry || new Date(user.premium_expiry) > new Date());
   return {
-    id:          user.id,
-    name:        user.name,
-    email:       user.email,
-    is_premium:  !!user.is_premium,
-    is_verified: !!user.is_verified,
-    xp:          d.xp        || 0,
-    streak:      d.streak    || 1,
-    tasks:       d.tasks     || [],
-    lessons:     d.lessons   || [],
-    challenges:  d.challenges|| {},
-    history:     d.history   || {},
-    lastDay:     d.lastDay   || null,
-    onboarded:   d.onboarded || false,
-    goals:       d.goals     || [],
+    id:             user.id,
+    name:           user.name,
+    email:          user.email,
+    is_premium:     premiumActive,
+    premium_expiry: user.premium_expiry || null,
+    is_verified:    !!user.is_verified,
+    xp:             d.xp        || 0,
+    streak:         d.streak    || 1,
+    tasks:          d.tasks     || [],
+    lessons:        d.lessons   || [],
+    challenges:     d.challenges|| {},
+    history:        d.history   || {},
+    lastDay:        d.lastDay   || null,
+    onboarded:      d.onboarded || false,
+    goals:          d.goals     || [],
   };
 }
 
@@ -454,6 +513,135 @@ Odpowiedz TYLKO w formacie JSON, bez żadnego tekstu przed ani po:
     console.error(e);
     res.status(500).json({ message: "Blad serwera." });
   }
+});
+
+// GET /plans
+app.get("/plans", (req, res) => {
+  res.json([
+    { id: "monthly",   name: "Premium 1 miesiąc",   price: 47,  currency: "PLN", months: 1 },
+    { id: "quarterly", name: "Premium 3 miesiące",  price: 97,  currency: "PLN", months: 3 },
+    { id: "yearly",    name: "Premium 1 rok",        price: 349, currency: "PLN", months: 12 },
+  ]);
+});
+
+// POST /create-checkout-session
+app.post("/create-checkout-session", auth, async (req, res) => {
+  try {
+    if (!stripe) return res.status(500).json({ message: "Płatności nie są skonfigurowane." });
+    const { planId } = req.body;
+    const plan = PLANS[planId];
+    if (!plan) return res.status(400).json({ message: "Nieprawidłowy plan." });
+
+    const user = await User.findOne({ email: req.user.email });
+    if (!user) return res.status(404).json({ message: "Użytkownik nie istnieje." });
+
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ["card", "p24"],
+      customer_email: user.email,
+      line_items: [{
+        price_data: {
+          currency: "pln",
+          product_data: { name: plan.name },
+          unit_amount: plan.price,
+        },
+        quantity: 1,
+      }],
+      mode: "payment",
+      metadata: { email: user.email, months: String(plan.months) },
+      success_url: `${process.env.FRONTEND_URL || "http://localhost:5173"}/premium?success=1`,
+      cancel_url:  `${process.env.FRONTEND_URL || "http://localhost:5173"}/premium?canceled=1`,
+    });
+
+    res.json({ url: session.url });
+  } catch (e) {
+    console.error("Stripe error:", e.message);
+    res.status(500).json({ message: "Błąd płatności." });
+  }
+});
+
+// GET /stats
+app.get("/stats", auth, async (req, res) => {
+  try {
+    const user = await User.findOne({ email: req.user.email });
+    if (!user) return res.status(404).json({ message: "Użytkownik nie istnieje." });
+
+    const d = user.data || {};
+    const history = d.history || {};
+    const days = Object.keys(history).sort();
+
+    const totalDays   = days.length;
+    const totalXP     = d.xp || 0;
+    const totalTasks  = days.reduce((s, k) => s + (history[k].tasksDone || 0), 0);
+    const bestStreak  = (() => {
+      let best = 0, cur = 0, prev = null;
+      for (const day of days) {
+        if (prev) {
+          const diff = (new Date(day) - new Date(prev)) / 86400000;
+          cur = diff === 1 ? cur + 1 : 1;
+        } else { cur = 1; }
+        if (cur > best) best = cur;
+        prev = day;
+      }
+      return best;
+    })();
+
+    const xpHistory = days.slice(-30).map(day => ({ day, xp: history[day]?.xp || 0 }));
+
+    res.json({
+      totalDays,
+      totalXP,
+      totalTasks,
+      currentStreak: d.streak || 0,
+      bestStreak,
+      lessonsCompleted: (d.lessons || []).length,
+      goalsCreated: (d.goals || []).length,
+      xpHistory,
+    });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ message: "Błąd serwera." });
+  }
+});
+
+// POST /push/subscribe
+app.post("/push/subscribe", auth, async (req, res) => {
+  try {
+    const { subscription } = req.body;
+    if (!subscription) return res.status(400).json({ message: "Brak subskrypcji." });
+
+    const user = await User.findOne({ email: req.user.email });
+    if (!user) return res.status(404).json({ message: "Użytkownik nie istnieje." });
+
+    user.push_subscription = subscription;
+    await user.save();
+    res.json({ ok: true });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ message: "Błąd serwera." });
+  }
+});
+
+// POST /push/send — wysyła powiadomienie do zalogowanego użytkownika
+app.post("/push/send", auth, async (req, res) => {
+  try {
+    if (!process.env.VAPID_PUBLIC_KEY) return res.status(500).json({ message: "Push nie skonfigurowany." });
+    const { title, body } = req.body;
+    const user = await User.findOne({ email: req.user.email });
+    if (!user?.push_subscription) return res.status(404).json({ message: "Brak subskrypcji push." });
+
+    await webpush.sendNotification(user.push_subscription, JSON.stringify({ title, body }));
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("Push error:", e.message);
+    res.status(500).json({ message: "Błąd push." });
+  }
+});
+
+// GET /vapid-public-key — frontend potrzebuje klucza do subskrypcji
+app.get("/vapid-public-key", (req, res) => {
+  const key = process.env.VAPID_PUBLIC_KEY;
+  if (!key) return res.status(404).json({ message: "Push nie skonfigurowany." });
+  res.json({ key });
 });
 
 // ── START ─────────────────────────────────────────────────────────────────────
