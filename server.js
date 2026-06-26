@@ -109,9 +109,11 @@ const PREMIUM_CODES = (process.env.PREMIUM_CODES || "WOJOWNIK2024,DYSCYPLINA77,N
 
 // ── MAILER (Brevo API) ────────────────────────────────────────────────────────
 const mailerEnabled = !!process.env.BREVO_API_KEY;
+console.log("📧 Mailer enabled:", mailerEnabled, "| FROM_EMAIL:", process.env.FROM_EMAIL);
 
 async function sendEmail(to, subject, html) {
-  if (!mailerEnabled) return;
+  if (!mailerEnabled) { console.log("📧 Mailer disabled — brak BREVO_API_KEY"); return; }
+  console.log("📧 Wysyłam email do:", to);
   const res = await fetch("https://api.brevo.com/v3/smtp/email", {
     method: "POST",
     headers: {
