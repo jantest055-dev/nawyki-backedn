@@ -64,7 +64,7 @@ app.post("/webhook", express.raw({ type: "application/json" }), async (req, res)
 });
 
 app.use(cors({
-  origin: ["https://nawyki-wojownika-k2yh991if-puzon-s-projects.vercel.app", "https://nawyki-wojownika.vercel.app", "https://nawyki-frontend.vercel.app", "http://localhost:5173"],
+  origin: ["https://nawyki-wojownika-k2yh991if-puzon-s-projects.vercel.app", "https://nawyki-wojownika.vercel.app", "https://nawyki-frontend.vercel.app", "https://dyscyplinawojownika.pl", "https://www.dyscyplinawojownika.pl", "http://localhost:5173"],
   credentials: true,
 }));
 app.use(express.json());
