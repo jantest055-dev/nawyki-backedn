@@ -108,23 +108,21 @@ const PREMIUM_CODES = (process.env.PREMIUM_CODES || "WOJOWNIK2024,DYSCYPLINA77,N
   .split(",").map(c => c.trim().toUpperCase());
 
 // ── MAILER (Brevo API) ────────────────────────────────────────────────────────
-const mailerEnabled = !!process.env.BREVO_API_KEY;
-console.log("📧 Mailer enabled:", mailerEnabled, "| FROM_EMAIL:", process.env.FROM_EMAIL);
+const mailerEnabled = !!process.env.RESEND_API_KEY;
 
 async function sendEmail(to, subject, html) {
-  if (!mailerEnabled) { console.log("📧 Mailer disabled — brak BREVO_API_KEY"); return; }
-  console.log("📧 Wysyłam email do:", to);
-  const res = await fetch("https://api.brevo.com/v3/smtp/email", {
+  if (!mailerEnabled) return;
+  const res = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "api-key": process.env.BREVO_API_KEY,
+      "Authorization": "Bearer " + process.env.RESEND_API_KEY,
     },
     body: JSON.stringify({
-      sender: { name: "Nawyki Wojownika", email: process.env.FROM_EMAIL || "ade1b5001@smtp-brevo.com" },
-      to: [{ email: to }],
+      from: process.env.FROM_EMAIL || "Nawyki Wojownika <onboarding@resend.dev>",
+      to: [to],
       subject,
-      htmlContent: html,
+      html,
     }),
   });
   if (!res.ok) {
