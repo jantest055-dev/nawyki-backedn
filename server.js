@@ -132,7 +132,8 @@ async function sendEmail(to, subject, html) {
 }
 
 async function sendVerificationEmail(email, token) {
-  const url = `${process.env.FRONTEND_URL || "http://localhost:5173"}/verify?token=${token}`;
+  const backendUrl = process.env.BACKEND_URL || "https://nawyki-backedn.onrender.com";
+  const url = `${backendUrl}/verify?token=${token}`;
   const html = '<div style="font-family:sans-serif;max-width:480px;background:#0f1923;color:#fff;padding:32px;border-radius:12px">'
     + '<h2 style="color:#f0a500">Nawyki Wojownika</h2>'
     + '<p>Kliknij przycisk zeby aktywowac konto:</p>'
